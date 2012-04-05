@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+#require "bundler"
+#Bundler.setup
+require "d16cc"
+
+src = File.read ARGV.first
+compiler = D16CC::Compiler.new src
+compiler.compile
+puts compiler.asm
