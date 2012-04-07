@@ -51,10 +51,10 @@ module D16CC
     end
 
     def int_to_words(int, type)
-      words = [int % 65536, (int / 65536) % 65536]
+      words = [int % 65536, (int / 65536) % 65536].reverse.drop_while(&:zero?).reverse
       if words.size > type.size
         warn! node, "Overflow in implicit constant conversion"
-        word.take type.size
+        words.take type.size
       else
         words + [0] * (type.size - words.size)
       end
@@ -286,11 +286,11 @@ module D16CC
       compile_node node.then
       if node.else
         compiler.section << "SET PC, #{end_label}"
-        compiler.section << ":#{else_label}"
+        compiler.section << ":#{else_label}      SET A,A"
         compile_node node.else
-        compiler.section << ":#{end_label}"
+        compiler.section << ":#{end_label}      SET A,A"
       else  
-        compiler.section << ":#{else_label}"
+        compiler.section << ":#{else_label}      SET A,A"
       end
     end
   end

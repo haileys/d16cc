@@ -47,8 +47,9 @@ module D16CC
     end
     
     def declare(name, type)
-      set_local Local.new self, name, type, @size
-      @size += type.size
+      set_local(Local.new(self, name, type, @size)).tap do
+        @size += type.size
+      end
     end
     
     def [](name)

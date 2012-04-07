@@ -12,7 +12,8 @@ module D16CC
       end
     
       def to_s
-        [":#{name}", *lines.map { |l| "    #{l}" }].join "\n"
+        # SET A,A is a workaround for noname--'s assembler which outputs 0x000F if a label is on its own line
+        [":#{name}      SET A,A", *lines.map { |l| "    #{l}" }].join "\n"
       end
     end
   
