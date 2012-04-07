@@ -270,12 +270,27 @@ module D16CC
             error! node, "Type mismatch in assignment"
           end
         else
-          require "pry"
-          pry binding
-          error! node, "Wtf"
+          error! node, "Undeclared identifier '#{node.lval.name}'"
         end
       else
         raise "unimplemented lval type #{node.lval.class}"
+      end
+    end
+    
+    def If
+      else_label = compiler.uniqid
+      end_label = compiler.uniqid
+      compile_node node.cond
+      compiler.section << "IFE A, 0"
+      compiler.section << "SET PC, #{else_label}"
+      compile_node node.then
+      if node.else
+        compiler.section << "SET PC, #{end_label}"
+        compiler.section << ":#{else_label}"
+        compile_node node.else
+        compiler.section << ":#{end_label}"
+      else  
+        compiler.section << ":#{else_label}"
       end
     end
   end

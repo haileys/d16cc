@@ -19,6 +19,7 @@ module D16CC
     attr_reader :types, :source, :sections, :symbols
   
     def initialize(source)
+      @anonymous_label = 0
       @source = source
       @sections = Hash.new { |h,k| h[k] = Section.new(k) }
       @symbols = {}
@@ -75,6 +76,10 @@ module D16CC
         require "pry"
         pry binding
       end
+    end
+  
+    def uniqid
+      "lbl_#{@anonymous_label += 1}"
     end
   
     def expression_type(node)
