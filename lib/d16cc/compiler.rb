@@ -40,7 +40,7 @@ module D16CC
     end
   
     def asm
-      [sections["main"], *sections.reject { |k,v| k == "main" }.values].map(&:to_s).join("\n\n")
+      [sections["_main"], *sections.reject { |k,v| k == "_main" }.values].map(&:to_s).join("\n\n")
     end
 
     def section
@@ -56,7 +56,7 @@ module D16CC
     end
   
     def with_scope(fn)
-      @current_scope = Scope.new sections[fn.name], fn
+      @current_scope = Scope.new sections["_#{fn.name}"], fn
       yield
       @current_scope = nil
     end
@@ -80,17 +80,19 @@ module D16CC
     def expression_type(node)
       case node
       when C::IntLiteral
-        type = (node.suffix && node.suffix.include?("l")) ? Types::Int32 : Types::Int16
-        type = type.as_unsigned if node.suffix and node.suffix.include? "u"
+        type = (node.suffix && node.suffix.downcase.include?("l")) ? Types::Int32 : Types::Int16
+        type = type.as_unsigned if node.suffix and node.suffix.downcase.include? "u"
         type
       when C::Variable
         if scope[node.name]
           scope[node.name].type
-        elsif symbols[node.name]
-          symbols[node.name].type
+        elsif symbols["_#{node.name}"]
+          symbols["_#{node.name}"]
         else
           @node_compiler.error! node, "Undefined identifier #{node.name}"
         end
+      when C::Negative
+        expression_type node.expr
       else
         raise "can't find expression type in #{node.class}!"
         require "pry"

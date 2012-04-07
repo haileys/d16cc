@@ -12,7 +12,7 @@ module D16CC
     end
 
     def error!(node, message)
-      raise "At #{node.pos} - #{message}"
+      raise CompileError, "At #{node.pos} - #{message}"
     end
     
     def warn!(node, message)
@@ -38,16 +38,26 @@ module D16CC
       end
     end
   
-    def save_local(local, reg = "A")
-      compiler.section << "SET #{local_ref local}, #{reg}"
+    def save_local(local, reg = "A", offset = 0)
+      compiler.section << "SET #{local_ref local, offset}, #{reg}"
     end
     
-    def load_local(local, reg = "A")
-      compiler.section << "SET #{reg}, #{local_ref local}"
+    def load_local(local, reg = "A", offset = 0)
+      compiler.section << "SET #{reg}, #{local_ref local, offset}"
     end
     
-    def local_ref(local)
-      "[#{-local.offset % 65536}+Z]"
+    def local_ref(local, offset = 0)
+      "[#{-local.offset % 65536 + offset}+Z]"
+    end
+
+    def int_to_words(int, type)
+      words = [int % 65536, (int / 65536) % 65536]
+      if words.size > type.size
+        warn! node, "Overflow in implicit constant conversion"
+        word.take type.size
+      else
+        words + [0] * (type.size - words.size)
+      end
     end
     
     # node compilers:
@@ -99,7 +109,22 @@ module D16CC
       type = compiler.expression_type(node)
       error! node, "Integer literal too large. Maximum for this type is #{type.max_value}" if node.val > type.max_value
       error! node, "Integer literal too small. Minimum for this type is #{type.min_value}" if node.val < type.min_value
-      compiler.section << "SET A, #{node.val}"
+      compiler.section << "SET A, #{node.val % 65536}"
+      compiler.section << "SET B, #{(node.val / 65536) % 65536}" if type.size == 2
+    end
+    
+    def Negative
+      if node.expr.is_a? C::IntLiteral
+        type = compiler.expression_type(node.expr)
+        error! node, "Integer literal too large. Maximum for this type is #{type.max_value}" if -node.expr.val > type.max_value
+        error! node, "Integer literal too small. Minimum for this type is #{type.min_value}" if -node.expr.val < type.min_value
+        compiler.section << "SET A, #{-node.expr.val % 65536}"
+      else
+        compile_node node.expr
+        # compute two's complete negation:
+        compiler.section << "XOR A, 0xFFFF" # binary not
+        compiler.section << "ADD A, 1"
+      end
     end
     
     def Call
@@ -115,7 +140,7 @@ module D16CC
         compiler.section << "SET PUSH, A"
       end
       if node.expr.is_a? C::Variable and not compiler.scope[node.expr.name]
-        compiler.section << "JSR #{node.expr.name}"
+        compiler.section << "JSR _#{node.expr.name}"
       else
         compile_node node.expr
         compiler.section << "JSR [A]"
@@ -127,7 +152,7 @@ module D16CC
       if local = compiler.scope[node.name]
         load_local local
       else
-        compiler.section << "SET A, [#{node.name}]"
+        compiler.section << "SET A, [_#{node.name}]"
       end
     end
     
@@ -166,6 +191,91 @@ module D16CC
         compiler.section << "SET PC, 0xFFF0" # crash it with an illegal opcode
       else
         compile_node node.expr
+      end
+    end
+    
+    def Declaration
+      type = compiler.ast_type node.type
+      declarators = node.declarators.map { |d| d.is_a?(Array) ? d.first : d }
+      if compiler.scope
+        declarators.each do |declarator|
+          local = compiler.scope.declare declarator.name, type
+          if declarator.init
+            if init = ConstantFolder.fold(self, declarator.init)
+              int_to_words(init, type).each_with_index do |word, offset|
+                compiler.section << "SET #{local_ref local, offset}, #{word}"
+              end
+            else
+              #
+            end
+          end
+        end
+      else
+        declarators.each do |declarator|
+          error! "Redeclaration of global '#{declarator.name}'" if compiler.symbols[declarator.name]
+          compiler.symbols["_#{declarator.name}"] = type
+          declarator.init ||= C::IntLiteral.new(0)
+          if type.is_a? Types::Integral
+            if init = ConstantFolder.fold(self, declarator.init)
+              int_to_words(init, type).each_with_index do |word, offset|
+                # encoding the offset into the label is a hack to compensate for this shoddy assembler
+                compiler.sections["_#{declarator.name}"] << ":_#{declarator.name}___word_#{offset} DW #{word}"
+              end
+            else
+              error! node, "Cannot initialize global with non-constant expression"
+            end
+          else
+            error! node, "initializion of non-integral types not supported yet (#{declarator.init.class})"
+          end
+        end
+      end
+    end
+    
+    def Assign
+      rval_type = compiler.expression_type node.rval
+      compile_node node.rval
+      case node.lval
+      when C::Variable
+        if local = compiler.scope[node.lval.name]
+          if local.type.is_a? Types::Integral and rval_type.is_a? Types::Integral
+            if local.type.size < rval_type.size
+              warn! node, "Value truncated in assignment"
+              save_local local, "A"
+            elsif local.type.size == rval_type.size
+              save_local local, "A"
+              save_local local, "B", 1 if local.type.size == 2
+            else
+              # zero extend, TODO sign extend instead
+              save_local local, "A"
+              compiler.section << "SET #{local_ref local, 1}, 0"
+            end
+          else
+            error! node, "Type mismatch in assignment"
+          end
+        elsif global = compiler.symbols["_#{node.lval.name}"]
+          error! node, "Invalid lval in assignment" if global.is_a? Types::Function
+          if global.is_a? Types::Integral and rval_type.is_a? Types::Integral
+            if global.size < rval_type.size
+              warn! node, "Value truncated in assignment"
+              compiler.section << "SET [_#{node.lval.name}], A"
+            elsif global.size == rval_type.size  
+              compiler.section << "SET [_#{node.lval.name}], A"
+              compiler.section << "SET [_#{node.lval.name}___word_1], B" if global.size == 2
+            else
+              # zero extend, TODO sign extend instead
+              compiler.section << "SET [_#{node.lval.name}], A"
+              compiler.section << "SET [_#{node.lval.name}___word_1], 0"
+            end
+          else
+            error! node, "Type mismatch in assignment"
+          end
+        else
+          require "pry"
+          pry binding
+          error! node, "Wtf"
+        end
+      else
+        raise "unimplemented lval type #{node.lval.class}"
       end
     end
   end
