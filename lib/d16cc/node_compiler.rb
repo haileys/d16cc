@@ -47,7 +47,7 @@ module D16CC
     end
     
     def local_ref(local, offset = 0)
-      "[#{-local.offset % 65536 + offset}+Z]"
+      "[#{-local.offset % 65536 + offset}+J]"
     end
 
     def int_to_words(int, type)
@@ -81,8 +81,8 @@ module D16CC
             arg_offset -= type.size
           end
         end
-        compiler.section << "SET PUSH, Z"
-        compiler.section << "SET Z, SP"
+        compiler.section << "SET PUSH, J"
+        compiler.section << "SET J, SP"
         compile_node node.def
       end
     end
@@ -100,8 +100,8 @@ module D16CC
         compile_node node.expr
       end
       # results of expressions are always left in A, which is our return register
-      compiler.section << "SET SP, Z"
-      compiler.section << "SET Z, POP"
+      compiler.section << "SET SP, J"
+      compiler.section << "SET J, POP"
       compiler.section << "SET PC, POP"
     end
     
